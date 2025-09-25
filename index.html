@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <link rel="stylesheet" href="./index.css"/>
+  <title>TwoSeats</title>
+</head>
+<body>
+  <!-- Floating Butterflies -->
+  <div class="butterfly" style="animation-delay: 0s;">🦋</div>
+  <div class="butterfly" style="animation-delay: 3s;">🦋</div>
+  <div class="butterfly" style="animation-delay: 6s;">🦋</div>
+  <div class="butterfly" style="animation-delay: 9s;">🦋</div>
+  <div class="butterfly" style="animation-delay: 12s;">🦋</div>
+
+  <!-- Welcome Screen -->
+  <div id="welcomeScreen" class="welcome-screen">
+    <h1 class="logo">TwoSeats</h1>
+    <p class="subtitle">Watch movies together, no matter the distance</p>
+    <button class="btn" onclick="showInvitationForm()">Send Movie Invitation</button>
+    <button class="btn btn-secondary" onclick="joinWithCode()">Join with Code</button>
+  </div>
+
+  <!-- Invitation Form -->
+  <div id="invitationForm" class="welcome-screen">
+    <div class="invitation-form">
+      <h2 style="text-align:center;color:#c8a8e9;margin-bottom:30px;">Send Movie Invitation</h2>
+
+      <div class="form-group">
+        <label>Name:</label>
+        <input type="text" id="partnerName" placeholder="Enter her name"/>
+      </div>
+
+      <div class="form-group">
+        <label>Movie Title:</label>
+        <input type="text" id="movieTitle" placeholder="What are we watching tonight?"/>
+      </div>
+
+      <div class="form-group">
+        <label>Sweet Message:</label>
+        <textarea id="personalMessage" rows="3" placeholder="Write something romantic..."></textarea>
+      </div>
+
+      <div class="form-group">
+        <label>Movie Date & Time:</label>
+        <input type="datetime-local" id="movieTime"/>
+      </div>
+
+      <!-- WhatsApp number -->
+      <div class="form-group">
+        <label>Partner WhatsApp Number (country code + number, no spaces):</label>
+        <input type="tel" id="partnerPhone" placeholder="e.g. 2507XXXXXXXX"/>
+        <small style="opacity:.7;">Example (Rwanda): 2507XXXXXXXX (no +, no spaces)</small>
+      </div>
+
+      <button class="btn" id="createInviteBtn" onclick="generateInvitation()">Create Invitation</button>
+      <button class="btn btn-secondary" onclick="showWelcome()">Back</button>
+
+      <div id="generatedInvite" class="hidden" style="margin-top:20px;">
+        <h3 style="color:#c8a8e9;margin-bottom:15px;">Your Invitation is Ready!</h3>
+
+        <div class="invitation-link-box">
+          <p><strong>Share this link:</strong></p>
+          <p id="inviteLink" style="color:#c8a8e9;margin-top:10px;"></p>
+        </div>
+
+        <div id="inviteMessage" style="background:#1a1a1a;padding:15px;border-radius:10px;margin:15px 0;white-space:pre-line;font-size:0.9rem;"></div>
+
+        <button class="btn" onclick="copyInvitation()">Copy Full Invitation</button>
+        <button class="btn" onclick="copyLink()">Copy Link Only</button>
+        <button class="btn" id="sendWhatsAppBtn" onclick="sendWhatsApp()">Send via WhatsApp</button>
+        <button class="btn btn-secondary" onclick="goToMoviePlatform()">Start Theater</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Movie Platform -->
+  <div id="moviePlatform" class="movie-platform">
+    <div class="platform-header">
+      <h1 class="platform-title">TwoSeats Theater</h1>
+      <p>
+        <span class="status-indicator" id="statusDot"></span>
+        <span id="connectionStatus">Initializing...</span>
+        <span style="margin-left:20px;color:#c8a8e9;">Room: <span id="roomDisplay">-</span></span>
+      </p>
+    </div>
+
+    <div class="main-content">
+      <div class="video-section">
+        <!-- Main Movie Area -->
+        <div class="video-container">
+          <div class="video-placeholder" id="videoArea">
+            <div style="text-align:center;">
+              <h3>Ready to Watch Together</h3>
+              <p>Upload your movie file or paste a video URL</p>
+              <br/>
+              <input type="file" id="movieFile" accept="video/*" style="margin:10px;" />
+              <br/>
+              <input type="url" id="movieUrl" placeholder="Or paste video URL here" style="padding:10px;border-radius:5px;margin:10px;width:300px;"/>
+              <br/>
+              <button class="btn" onclick="loadMovie()">Load Movie</button>
+            </div>
+          </div>
+
+          <div class="video-controls">
+            <button class="control-btn" onclick="togglePlay()">▶Play</button>
+            <button class="control-btn" onclick="pauseMovie()">⏸ Pause</button>
+            <button class="control-btn" onclick="syncTime()">Sync</button>
+            <button class="control-btn" onclick="toggleFullscreen()">Fullscreen</button>
+            <input type="range" id="progressBar" min="0" max="100" value="0" style="width:200px;margin:0 10px;"/>
+          </div>
+        </div>
+      </div>
+
+      <div class="sidebar">
+        <!-- Video Chat Area (Your & Partner) -->
+        <div class="video-chat-container">
+          <div class="video-chat-frame">
+            <div class="video-chat-placeholder" id="yourVideoPlaceholder">
+              <div>📹</div>
+              <div>Your Camera</div>
+            </div>
+            <video id="yourVideo" style="display:none;" autoplay muted playsinline></video>
+            <div class="video-label">You</div>
+          </div>
+          <div class="video-chat-frame">
+            <div class="video-chat-placeholder" id="partnerVideoPlaceholder">
+              <div>🦋</div>
+              <div>My Butterfly</div>
+            </div>
+            <video id="partnerVideo" style="display:none;" autoplay playsinline></video>
+            <div class="video-label" id="partnerVideoLabel">My Butterfly</div>
+          </div>
+          <div class="video-chat-controls">
+            <button class="control-btn" id="cameraBtn" onclick="toggleCamera()">📹 Camera</button>
+            <button class="control-btn" id="micBtn" onclick="toggleMic()">🎤 Mic</button>
+            <button class="control-btn" onclick="switchCamera()">Switch</button>
+          </div>
+        </div>
+
+        <!-- Chat Section -->
+        <div class="chat-sidebar">
+          <h3 style="color:#c8a8e9;margin-bottom:15px;">Chat</h3>
+          <div class="chat-messages" id="chatMessages">
+            <p style="color:#888;text-align:center;font-style:italic;">Start chatting! Messages will appear here</p>
+          </div>
+          <div class="chat-input">
+            <input type="text" id="chatInput" placeholder="Type your message..." onkeypress="handleChatKeyPress(event)"/>
+            <button class="btn" onclick="sendMessage()">Send</button>
+          </div>
+        </div>
+
+        <!-- Invitation Info -->
+        <div class="invitation-display">
+          <h3 style="color:#c8a8e9;margin-bottom:15px;">Session Info</h3>
+          <p><strong>Room Code:</strong> <span id="currentRoomCode">-</span></p>
+          <p><strong>Status:</strong> <span id="sessionStatus">Waiting for butterfly...</span></p>
+          <button class="btn btn-secondary" style="margin-top:15px;padding:8px 16px;font-size:0.9rem;" onclick="copyRoomLink()">Share Room Link</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PeerJS (signaling helper for WebRTC) -->
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  <!-- Your app JS -->
+  <script src="./index.js"></script>
+</body>
+</html>
