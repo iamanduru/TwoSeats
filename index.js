@@ -1,20 +1,33 @@
+/***************
+ * TwoSeats – index.js
+ * - Deterministic Peer IDs:
+ *     Host  => `${roomCode}-HOST`
+ *     Guest => `${roomCode}-GUEST`
+ * - Guest sends CAMERA to Host
+ * - Host sends MOVIE to Guest (via captureStream)
+ * - WhatsApp invite + partner name sync
+ ***************/
+
 let currentVideo = null;
 let isHost = false;
 let roomCode = null;
 let localStream = null;
 let isCameraOn = false;
 let isMicOn = true;
-let partnerNameGlobal = 'Mitch';
+let partnerNameGlobal = 'My Butterfly';
 
-// PeerJS/WebRTC
+// PeerJS / WebRTC
 let peer = null;
-let conn = null;       // optional data channel
-let mediaCall = null;  // camera/mic
-let movieCall = null;  // movie stream
+let conn = null;       // optional data channel for chat/sync
+let mediaCall = null;  // camera/mic call
+let movieCall = null;  // movie call
+
+let myPeerId = null;
+let targetPeerId = null;
 
 // ===== Init =====
 window.addEventListener('load', () => {
-  showWelcome(); // ensure starting state
+  showWelcome(); // initial state
 
   const urlParams = new URLSearchParams(window.location.search);
   if (urlParams.has('room')) {
@@ -24,11 +37,9 @@ window.addEventListener('load', () => {
     addChatMessage('System', 'Joined via invitation link!');
   }
 
-  // partner label initial
   const lbl = document.getElementById('partnerVideoLabel');
   if (lbl) lbl.textContent = partnerNameGlobal;
 
-  // progress bar listener
   const pb = document.getElementById('progressBar');
   if (pb) {
     pb.addEventListener('input', function () {
@@ -50,13 +61,12 @@ function showWelcome() {
 function showInvitationForm() {
   document.getElementById('welcomeScreen').style.display = 'none';
   document.getElementById('invitationForm').style.display = 'flex';
-  // ensure inner form is visible even if CSS had display:none
   const innerForm = document.querySelector('.invitation-form');
   if (innerForm) innerForm.style.display = 'block';
 
   isHost = true;
 
-  // Set default time to 2 hours from now
+  // Default time +2h
   const now = new Date();
   now.setHours(now.getHours() + 2);
   document.getElementById('movieTime').value = now.toISOString().slice(0, 16);
@@ -76,7 +86,7 @@ function generateInvitation() {
     partnerPlaceholder.innerHTML = `<div>🦋</div><div>${partnerNameGlobal}</div>`;
   }
 
-  // Generate a unique room code
+  // Unique room
   roomCode = 'TS' + Math.random().toString(36).substr(2, 6).toUpperCase();
 
   const currentUrl = window.location.href.split('?')[0];
@@ -203,8 +213,7 @@ function goToMoviePlatform() {
     addChatMessage('System', 'You\'ve joined the movie date!');
   }
 
-  // Start PeerJS after UI is ready
-  initPeer();
+  initPeer(); // start PeerJS after UI ready
 }
 
 function updateConnectionStatus(message, status) {
@@ -215,14 +224,23 @@ function updateConnectionStatus(message, status) {
 
 // ===== PeerJS / WebRTC =====
 function initPeer() {
+  // Deterministic peer IDs so each side knows who to call
+  const hostId  = `${roomCode}-HOST`;
+  const guestId = `${roomCode}-GUEST`;
+
+  myPeerId     = isHost ? hostId  : guestId;
+  targetPeerId = isHost ? guestId : hostId;
+
   try {
-    if (isHost) {
-      // Host uses the roomCode as its peer ID
-      peer = new Peer(roomCode);
-    } else {
-      // Guest uses a random ID; will call host (roomCode)
-      peer = new Peer();
-    }
+    peer = new Peer(myPeerId, {
+      // Add TURN here if needed for strict networks:
+      // config: {
+      //   iceServers: [
+      //     { urls: 'stun:stun.l.google.com:19302' },
+      //     // { urls: 'turn:YOUR_TURN_SERVER', username: 'user', credential: 'pass' }
+      //   ]
+      // }
+    });
   } catch (e) {
     console.error('Peer creation error:', e);
     addChatMessage('System', 'Peer creation failed');
@@ -232,35 +250,40 @@ function initPeer() {
   peer.on('open', (id) => {
     addChatMessage('System', `Peer ready (${id})`);
     if (!isHost) {
-      // connect optional data channel
-      conn = peer.connect(roomCode);
+      // Guest connects a data channel to Host
+      conn = peer.connect(targetPeerId);
       conn.on('open', () => addChatMessage('System', 'Connected to host'));
+      conn.on('data', handleIncomingData);
     }
   });
 
-  // Data channel (optional)
+  // Incoming data channel
   peer.on('connection', (c) => {
     conn = c;
-    conn.on('data', (msg) => {
-      // handle incoming sync/chat if needed
-      // addChatMessage('Partner', String(msg));
-    });
+    conn.on('data', handleIncomingData);
   });
 
   // Incoming media calls (camera or movie)
   peer.on('call', (incomingCall) => {
     const isMovie = incomingCall.metadata?.type === 'movie';
-    // Answer (no need to send a stream back for movie; for camera, we could send ours if we have)
-    incomingCall.answer(localStream && !isMovie ? localStream : undefined);
+
+    // Answer: for camera, send back our local stream if we have it; for movie, answer without stream
+    incomingCall.answer(isMovie ? undefined : (localStream || undefined));
 
     incomingCall.on('stream', (remoteStream) => {
-      // For simplicity we render both incoming streams in partnerVideo (movie or camera)
-      const partnerVideo = document.getElementById('partnerVideo');
-      const partnerPlaceholder = document.getElementById('partnerVideoPlaceholder');
-      partnerVideo.srcObject = remoteStream;
-      partnerVideo.style.display = 'block';
-      if (partnerPlaceholder) partnerPlaceholder.style.display = 'none';
-      addChatMessage('System', isMovie ? '🎬 Movie stream received' : '📹 Camera stream received');
+      if (isMovie) {
+        // Guest receives movie from host → render in main area
+        if (!isHost) renderRemoteMovie(remoteStream);
+        addChatMessage('System', '🎬 Movie stream received');
+      } else {
+        // Camera stream → show in partnerVideo
+        const partnerVideo = document.getElementById('partnerVideo');
+        const partnerPlaceholder = document.getElementById('partnerVideoPlaceholder');
+        partnerVideo.srcObject = remoteStream;
+        partnerVideo.style.display = 'block';
+        if (partnerPlaceholder) partnerPlaceholder.style.display = 'none';
+        addChatMessage('System', '📹 Camera stream received');
+      }
     });
 
     if (isMovie) movieCall = incomingCall; else mediaCall = incomingCall;
@@ -272,7 +295,14 @@ function initPeer() {
   });
 }
 
-// Movie Controls
+function handleIncomingData(msg) {
+  if (!msg || typeof msg !== 'object') return;
+  if (msg.type === 'chat') {
+    addChatMessage(partnerNameGlobal, msg.text);
+  }
+}
+
+// ===== Movie Controls =====
 function loadMovie() {
   const fileInput = document.getElementById('movieFile');
   const urlInput = document.getElementById('movieUrl');
@@ -284,10 +314,9 @@ function loadMovie() {
     addChatMessage('System', `Movie loaded: ${file.name}`);
   } else if (urlInput.value) {
     createVideoPlayer(urlInput.value);
-    addChatMessage('System', `Movie loaded from URL`);
+    addChatMessage('System', 'Movie loaded from URL');
   } else {
     alert('Please select a file or enter a URL');
-    return;
   }
 }
 
@@ -304,7 +333,7 @@ function createVideoPlayer(src) {
 
   currentVideo.addEventListener('play', () => {
     addChatMessage('System', '▶ Movie started');
-    // Host shares the movie stream
+    // Host shares the movie stream to guest
     if (isHost) startMovieShare();
   });
   currentVideo.addEventListener('pause', () => {
@@ -315,6 +344,7 @@ function createVideoPlayer(src) {
 
 function startMovieShare() {
   if (!peer) return addChatMessage('System', 'Peer not ready yet');
+  if (!isHost) return; // only host sends movie
   const videoEl = document.getElementById('movieVideo');
   if (!videoEl) return;
 
@@ -327,23 +357,32 @@ function startMovieShare() {
       addChatMessage('System', 'captureStream not supported in this browser');
       return;
     }
-    // Host sends movie to guest (call host->roomCode, guest answers in peer.on('call'))
-    if (isHost) {
-      const call = peer.call(roomCode, stream, { metadata: { type: 'movie' } });
-      if (call) {
-        call.on('stream', () => addChatMessage('System', '🎬 Movie streaming to partner'));
-        movieCall = call;
-      }
+
+    const call = peer.call(targetPeerId, stream, { metadata: { type: 'movie' } });
+    if (call) {
+      call.on('stream', () => addChatMessage('System', '🎬 Movie streaming to partner'));
+      movieCall = call;
     }
   };
 
-  // Some browsers require the video to be playing first
+  // Must be playing in some browsers
   if (videoEl.readyState < 3) {
     videoEl.addEventListener('playing', () => share(), { once: true });
     videoEl.play().catch(() => {});
   } else {
     share();
   }
+}
+
+// Guest renders remote movie into main area
+function renderRemoteMovie(remoteStream) {
+  const videoArea = document.getElementById('videoArea');
+  videoArea.innerHTML = `
+    <video id="remoteMovie" width="100%" height="100%" controls autoplay playsinline></video>
+  `;
+  const remoteMovie = document.getElementById('remoteMovie');
+  remoteMovie.srcObject = remoteStream;
+  remoteMovie.play().catch(() => {});
 }
 
 function togglePlay() {
@@ -382,7 +421,7 @@ function formatTime(seconds) {
   return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
 
-// ===== Video Chat (camera/mic) =====
+// ===== Camera / Mic =====
 async function toggleCamera() {
   const cameraBtn = document.getElementById('cameraBtn');
 
@@ -407,9 +446,10 @@ async function toggleCamera() {
 
       addChatMessage('System', 'Your camera is now on!');
 
-      // Send cam to partner: guest calls host; host waits for incoming
+      // GUEST sends camera to HOST
       if (!isHost && peer) {
-        const call = peer.call(roomCode, localStream, { metadata: { type: 'camera' } });
+        if (mediaCall) { mediaCall.close(); mediaCall = null; }
+        const call = peer.call(targetPeerId, localStream, { metadata: { type: 'camera' } });
         if (call) {
           call.on('stream', (remoteStream) => {
             const partnerVideo = document.getElementById('partnerVideo');
@@ -428,7 +468,6 @@ async function toggleCamera() {
       addChatMessage('System', 'Camera access denied');
     }
   } else {
-    // Turn off
     if (mediaCall) { mediaCall.close(); mediaCall = null; }
     if (localStream) {
       localStream.getTracks().forEach(track => track.stop());
@@ -472,15 +511,12 @@ async function toggleMic() {
 async function switchCamera() {
   if (isCameraOn && localStream) {
     try {
-      // Get available video devices
       const devices = await navigator.mediaDevices.enumerateDevices();
       const videoDevices = devices.filter(d => d.kind === 'videoinput');
 
       if (videoDevices.length > 1) {
-        // Stop current stream
         localStream.getTracks().forEach(track => track.stop());
 
-        // Toggle facing mode
         const facing = localStream.getVideoTracks()[0].getSettings().facingMode === 'user' ? 'environment' : 'user';
         localStream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: facing },
@@ -489,10 +525,10 @@ async function switchCamera() {
 
         document.getElementById('yourVideo').srcObject = localStream;
 
-        // Re-call if we are guest acting as caller
+        // Re-call (guest -> host)
         if (!isHost && peer) {
           if (mediaCall) { mediaCall.close(); mediaCall = null; }
-          const call = peer.call(roomCode, localStream, { metadata: { type: 'camera' } });
+          const call = peer.call(targetPeerId, localStream, { metadata: { type: 'camera' } });
           mediaCall = call;
         }
 
@@ -516,7 +552,6 @@ function sendMessage() {
   if (message) {
     addChatMessage('You', message);
     input.value = '';
-    // No auto-replies
     if (conn && conn.open) {
       try { conn.send({ type: 'chat', text: message }); } catch {}
     }
@@ -559,12 +594,11 @@ function addChatMessage(sender, message) {
   chatMessages.appendChild(messageElement);
   chatMessages.scrollTop = chatMessages.scrollHeight;
 
-  // Remove placeholder if exists
   const placeholder = chatMessages.querySelector('p');
   if (placeholder && placeholder.textContent.includes('Start chatting')) placeholder.remove();
 }
 
-// Atmosphere tip
+// Friendly tip
 setTimeout(() => {
   if (document.getElementById('moviePlatform').style.display === 'block') {
     addChatMessage('System', 'Pro tip: Click "Camera" to see each other!');

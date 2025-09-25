@@ -47,7 +47,6 @@
         <input type="datetime-local" id="movieTime"/>
       </div>
 
-      <!-- WhatsApp number -->
       <div class="form-group">
         <label>Partner WhatsApp Number (country code + number, no spaces):</label>
         <input type="tel" id="partnerPhone" placeholder="e.g. 2507XXXXXXXX"/>
@@ -88,7 +87,6 @@
 
     <div class="main-content">
       <div class="video-section">
-        <!-- Main Movie Area -->
         <div class="video-container">
           <div class="video-placeholder" id="videoArea">
             <div style="text-align:center;">
@@ -114,7 +112,6 @@
       </div>
 
       <div class="sidebar">
-        <!-- Video Chat Area (Your & Partner) -->
         <div class="video-chat-container">
           <div class="video-chat-frame">
             <div class="video-chat-placeholder" id="yourVideoPlaceholder">
@@ -139,7 +136,6 @@
           </div>
         </div>
 
-        <!-- Chat Section -->
         <div class="chat-sidebar">
           <h3 style="color:#c8a8e9;margin-bottom:15px;">Chat</h3>
           <div class="chat-messages" id="chatMessages">
@@ -151,7 +147,6 @@
           </div>
         </div>
 
-        <!-- Invitation Info -->
         <div class="invitation-display">
           <h3 style="color:#c8a8e9;margin-bottom:15px;">Session Info</h3>
           <p><strong>Room Code:</strong> <span id="currentRoomCode">-</span></p>
@@ -162,9 +157,8 @@
     </div>
   </div>
 
-  <!-- PeerJS (signaling helper for WebRTC) -->
+  <!-- PeerJS -->
   <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-  <!-- Your app JS -->
   <script src="./index.js"></script>
 </body>
 </html>
