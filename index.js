@@ -1,33 +1,39 @@
 /***************
- * TwoSeats – index.js
- * - Deterministic Peer IDs:
- *     Host  => `${roomCode}-HOST`
- *     Guest => `${roomCode}-GUEST`
- * - Guest sends CAMERA to Host
- * - Host sends MOVIE to Guest (via captureStream)
- * - WhatsApp invite + partner name sync
+ * TwoSeats – index.js (reliable)
+ * - Host ID:  `${roomCode}-HOST`
+ * - Guest ID: `${roomCode}-GUEST`
+ * - Data-channel handshake: "hello"/"ready"
+ * - Guest ↔ Host camera calls (both ways)
+ * - Host → Guest movie stream (captureStream)
  ***************/
 
 let currentVideo = null;
 let isHost = false;
 let roomCode = null;
+
 let localStream = null;
 let isCameraOn = false;
 let isMicOn = true;
+
 let partnerNameGlobal = 'My Butterfly';
 
 // PeerJS / WebRTC
 let peer = null;
-let conn = null;       // optional data channel for chat/sync
-let mediaCall = null;  // camera/mic call
-let movieCall = null;  // movie call
+let conn = null;         // data channel
+let mediaCallToPartner = null;  // our outgoing camera call
+let mediaCallFromPartner = null; // incoming camera call
+let movieCall = null;     // host's outgoing movie call
 
 let myPeerId = null;
 let targetPeerId = null;
 
+let peerOpen = false;
+let remoteReady = false;   // set after handshake
+let meReady = false;       // set after we open & UI is ready
+
 // ===== Init =====
 window.addEventListener('load', () => {
-  showWelcome(); // initial state
+  showWelcome();
 
   const urlParams = new URLSearchParams(window.location.search);
   if (urlParams.has('room')) {
@@ -66,7 +72,6 @@ function showInvitationForm() {
 
   isHost = true;
 
-  // Default time +2h
   const now = new Date();
   now.setHours(now.getHours() + 2);
   document.getElementById('movieTime').value = now.toISOString().slice(0, 16);
@@ -86,7 +91,6 @@ function generateInvitation() {
     partnerPlaceholder.innerHTML = `<div>🦋</div><div>${partnerNameGlobal}</div>`;
   }
 
-  // Unique room
   roomCode = 'TS' + Math.random().toString(36).substr(2, 6).toUpperCase();
 
   const currentUrl = window.location.href.split('?')[0];
@@ -213,7 +217,7 @@ function goToMoviePlatform() {
     addChatMessage('System', 'You\'ve joined the movie date!');
   }
 
-  initPeer(); // start PeerJS after UI ready
+  initPeer();
 }
 
 function updateConnectionStatus(message, status) {
@@ -224,7 +228,6 @@ function updateConnectionStatus(message, status) {
 
 // ===== PeerJS / WebRTC =====
 function initPeer() {
-  // Deterministic peer IDs so each side knows who to call
   const hostId  = `${roomCode}-HOST`;
   const guestId = `${roomCode}-GUEST`;
 
@@ -233,13 +236,13 @@ function initPeer() {
 
   try {
     peer = new Peer(myPeerId, {
-      // Add TURN here if needed for strict networks:
-      // config: {
-      //   iceServers: [
-      //     { urls: 'stun:stun.l.google.com:19302' },
-      //     // { urls: 'turn:YOUR_TURN_SERVER', username: 'user', credential: 'pass' }
-      //   ]
-      // }
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          // 👉 Add your TURN for tough networks (recommended for production):
+          // { urls: 'turn:YOUR_TURN_SERVER', username: 'user', credential: 'pass' }
+        ]
+      }
     });
   } catch (e) {
     console.error('Peer creation error:', e);
@@ -248,35 +251,47 @@ function initPeer() {
   }
 
   peer.on('open', (id) => {
+    peerOpen = true;
+    meReady = true;
     addChatMessage('System', `Peer ready (${id})`);
+
+    // Establish data channel to the other side (whoever we are)
     if (!isHost) {
-      // Guest connects a data channel to Host
       conn = peer.connect(targetPeerId);
-      conn.on('open', () => addChatMessage('System', 'Connected to host'));
+      conn.on('open', () => {
+        addChatMessage('System', 'Data channel open');
+        sendHello();
+      });
       conn.on('data', handleIncomingData);
+    } else {
+      // Host waits for guest to connect via `peer.on('connection')`
     }
   });
 
   // Incoming data channel
   peer.on('connection', (c) => {
     conn = c;
+    conn.on('open', () => {
+      addChatMessage('System', 'Data channel open');
+      sendHello();
+    });
     conn.on('data', handleIncomingData);
   });
 
-  // Incoming media calls (camera or movie)
+  // Incoming media calls
   peer.on('call', (incomingCall) => {
     const isMovie = incomingCall.metadata?.type === 'movie';
 
-    // Answer: for camera, send back our local stream if we have it; for movie, answer without stream
+    // Camera: answer with our localStream if we have one (so we can be seen too).
+    // Movie: answer without a stream.
     incomingCall.answer(isMovie ? undefined : (localStream || undefined));
 
     incomingCall.on('stream', (remoteStream) => {
       if (isMovie) {
-        // Guest receives movie from host → render in main area
         if (!isHost) renderRemoteMovie(remoteStream);
         addChatMessage('System', '🎬 Movie stream received');
       } else {
-        // Camera stream → show in partnerVideo
+        // Camera stream → partner box
         const partnerVideo = document.getElementById('partnerVideo');
         const partnerPlaceholder = document.getElementById('partnerVideoPlaceholder');
         partnerVideo.srcObject = remoteStream;
@@ -286,7 +301,8 @@ function initPeer() {
       }
     });
 
-    if (isMovie) movieCall = incomingCall; else mediaCall = incomingCall;
+    // Keep references to close later if needed
+    if (isMovie) movieCall = incomingCall; else mediaCallFromPartner = incomingCall;
   });
 
   peer.on('error', (err) => {
@@ -295,10 +311,37 @@ function initPeer() {
   });
 }
 
+// ===== Handshake over data channel =====
+function sendHello() {
+  if (conn && conn.open) {
+    conn.send({ type: 'hello', from: myPeerId });
+  }
+}
+
 function handleIncomingData(msg) {
   if (!msg || typeof msg !== 'object') return;
+
+  if (msg.type === 'hello') {
+    // reply that we're ready
+    if (conn && conn.open) conn.send({ type: 'ready', from: myPeerId });
+  }
+
+  if (msg.type === 'ready') {
+    remoteReady = true;
+    addChatMessage('System', 'Peer is ready');
+
+    // If we are the host and already have a movie loaded & playing, ensure stream starts
+    tryStartMovieShare();
+  }
+
   if (msg.type === 'chat') {
     addChatMessage(partnerNameGlobal, msg.text);
+  }
+}
+
+function tryStartMovieShare() {
+  if (isHost && remoteReady && currentVideo && !currentVideo.paused) {
+    startMovieShare();
   }
 }
 
@@ -317,6 +360,7 @@ function loadMovie() {
     addChatMessage('System', 'Movie loaded from URL');
   } else {
     alert('Please select a file or enter a URL');
+    return;
   }
 }
 
@@ -333,8 +377,9 @@ function createVideoPlayer(src) {
 
   currentVideo.addEventListener('play', () => {
     addChatMessage('System', '▶ Movie started');
-    // Host shares the movie stream to guest
-    if (isHost) startMovieShare();
+    // Only host streams the movie to guest,
+    // and only after we know the guest is ready
+    tryStartMovieShare();
   });
   currentVideo.addEventListener('pause', () => {
     addChatMessage('System', '⏸ Movie paused');
@@ -343,8 +388,10 @@ function createVideoPlayer(src) {
 }
 
 function startMovieShare() {
-  if (!peer) return addChatMessage('System', 'Peer not ready yet');
-  if (!isHost) return; // only host sends movie
+  if (!peer || !peerOpen) return addChatMessage('System', 'Peer not ready yet');
+  if (!isHost) return;
+  if (!remoteReady) return addChatMessage('System', 'Waiting for partner to be ready…');
+
   const videoEl = document.getElementById('movieVideo');
   if (!videoEl) return;
 
@@ -358,6 +405,9 @@ function startMovieShare() {
       return;
     }
 
+    // Close previous movie call if any (avoid stale tracks)
+    if (movieCall) { try { movieCall.close(); } catch {} movieCall = null; }
+
     const call = peer.call(targetPeerId, stream, { metadata: { type: 'movie' } });
     if (call) {
       call.on('stream', () => addChatMessage('System', '🎬 Movie streaming to partner'));
@@ -365,8 +415,8 @@ function startMovieShare() {
     }
   };
 
-  // Must be playing in some browsers
-  if (videoEl.readyState < 3) {
+  // must be playing in some browsers
+  if (videoEl.readyState < 3 || videoEl.paused) {
     videoEl.addEventListener('playing', () => share(), { once: true });
     videoEl.play().catch(() => {});
   } else {
@@ -446,11 +496,14 @@ async function toggleCamera() {
 
       addChatMessage('System', 'Your camera is now on!');
 
-      // GUEST sends camera to HOST
-      if (!isHost && peer) {
-        if (mediaCall) { mediaCall.close(); mediaCall = null; }
+      // Close any previous outgoing camera call
+      if (mediaCallToPartner) { try { mediaCallToPartner.close(); } catch {} mediaCallToPartner = null; }
+
+      // Call the partner with our camera
+      if (peerOpen) {
         const call = peer.call(targetPeerId, localStream, { metadata: { type: 'camera' } });
         if (call) {
+          // If remote also answers with a stream, show it in partner box
           call.on('stream', (remoteStream) => {
             const partnerVideo = document.getElementById('partnerVideo');
             const partnerPlaceholder = document.getElementById('partnerVideoPlaceholder');
@@ -459,8 +512,10 @@ async function toggleCamera() {
             if (partnerPlaceholder) partnerPlaceholder.style.display = 'none';
             addChatMessage('System', '📹 Remote camera connected');
           });
-          mediaCall = call;
+          mediaCallToPartner = call;
         }
+      } else {
+        addChatMessage('System', 'Peer not ready yet for camera; try again in a moment.');
       }
     } catch (error) {
       console.error('Error accessing camera:', error);
@@ -468,7 +523,10 @@ async function toggleCamera() {
       addChatMessage('System', 'Camera access denied');
     }
   } else {
-    if (mediaCall) { mediaCall.close(); mediaCall = null; }
+    // Turn off camera
+    if (mediaCallToPartner) { try { mediaCallToPartner.close(); } catch {} mediaCallToPartner = null; }
+    if (mediaCallFromPartner) { try { mediaCallFromPartner.close(); } catch {} mediaCallFromPartner = null; }
+
     if (localStream) {
       localStream.getTracks().forEach(track => track.stop());
       localStream = null;
@@ -509,39 +567,37 @@ async function toggleMic() {
 }
 
 async function switchCamera() {
-  if (isCameraOn && localStream) {
-    try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const videoDevices = devices.filter(d => d.kind === 'videoinput');
+  if (!isCameraOn || !localStream) return alert('Please start your camera first');
 
-      if (videoDevices.length > 1) {
-        localStream.getTracks().forEach(track => track.stop());
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const videoDevices = devices.filter(d => d.kind === 'videoinput');
 
-        const facing = localStream.getVideoTracks()[0].getSettings().facingMode === 'user' ? 'environment' : 'user';
-        localStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: facing },
-          audio: isMicOn
-        });
+    if (videoDevices.length > 1) {
+      localStream.getTracks().forEach(track => track.stop());
 
-        document.getElementById('yourVideo').srcObject = localStream;
+      const facing = localStream.getVideoTracks()[0].getSettings().facingMode === 'user' ? 'environment' : 'user';
+      localStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: facing },
+        audio: isMicOn
+      });
 
-        // Re-call (guest -> host)
-        if (!isHost && peer) {
-          if (mediaCall) { mediaCall.close(); mediaCall = null; }
-          const call = peer.call(targetPeerId, localStream, { metadata: { type: 'camera' } });
-          mediaCall = call;
-        }
+      document.getElementById('yourVideo').srcObject = localStream;
 
-        addChatMessage('System', 'Camera switched!');
-      } else {
-        addChatMessage('System', 'Only one camera available');
+      // Re-call with the new stream
+      if (mediaCallToPartner) { try { mediaCallToPartner.close(); } catch {} mediaCallToPartner = null; }
+      if (peerOpen) {
+        const call = peer.call(targetPeerId, localStream, { metadata: { type: 'camera' } });
+        mediaCallToPartner = call;
       }
-    } catch (error) {
-      console.error('Error switching camera:', error);
-      addChatMessage('System', 'Could not switch camera');
+
+      addChatMessage('System', 'Camera switched!');
+    } else {
+      addChatMessage('System', 'Only one camera available');
     }
-  } else {
-    alert('Please start your camera first');
+  } catch (error) {
+    console.error('Error switching camera:', error);
+    addChatMessage('System', 'Could not switch camera');
   }
 }
 
@@ -598,9 +654,9 @@ function addChatMessage(sender, message) {
   if (placeholder && placeholder.textContent.includes('Start chatting')) placeholder.remove();
 }
 
-// Friendly tip
+// Tip
 setTimeout(() => {
   if (document.getElementById('moviePlatform').style.display === 'block') {
-    addChatMessage('System', 'Pro tip: Click "Camera" to see each other!');
+    addChatMessage('System', 'Pro tip: Use HTTPS (or localhost) so camera/mic works.');
   }
 }, 8000);
