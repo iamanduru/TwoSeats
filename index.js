@@ -15,7 +15,7 @@ let localStream = null;
 let isCameraOn = false;
 let isMicOn = true;
 
-let partnerNameGlobal = 'My Butterfly';
+let partnerNameGlobal = 'Mitch';
 
 // PeerJS / WebRTC
 let peer = null;
@@ -80,7 +80,7 @@ function showInvitationForm() {
 function generateInvitation() {
   const partnerName = document.getElementById('partnerName').value.trim() || 'Beautiful';
   const movieTitle = document.getElementById('movieTitle').value.trim() || 'Our Special Movie';
-  const message = document.getElementById('personalMessage').value.trim() || 'Can\'t wait to watch with you and see your beautiful face! 🦋💕';
+  const message = document.getElementById('personalMessage').value.trim() || 'Can\'t wait to watch with you and see your beautiful face!';
   const movieTime = document.getElementById('movieTime').value;
 
   partnerNameGlobal = partnerName || 'My Butterfly';
@@ -105,15 +105,11 @@ ${message}
  Movie: ${movieTitle}
  When: ${movieTime ? new Date(movieTime).toLocaleString() : 'Anytime you\'re ready!'}
  Room Code: ${roomCode}
-
-🔗 Join our private theater:
+Join our private theater:
 ${inviteLink}
-
-Just click the link and we can watch together while seeing each other's beautiful faces! 
-
 Can't wait for our movie date!
 
-Your Love,
+Your Likkle Human,
 Andy`;
 
   const inviteLinkElement = document.getElementById('inviteLink');
@@ -297,7 +293,7 @@ function initPeer() {
         partnerVideo.srcObject = remoteStream;
         partnerVideo.style.display = 'block';
         if (partnerPlaceholder) partnerPlaceholder.style.display = 'none';
-        addChatMessage('System', '📹 Camera stream received');
+        addChatMessage('System', 'Camera stream received');
       }
     });
 
